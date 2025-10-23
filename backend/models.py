@@ -44,12 +44,14 @@ class QuizResultInDB(BaseModel):
     score: int
     total_questions: int
     percentage: float
+    recommendations: Optional[List[str]] = None
     submitted_at: datetime = datetime.utcnow()
 
 class ScoreResponse(BaseModel):
     score: int
     total_questions: int
     percentage: float
+    recommendations: Optional[List[str]] = None
 
 class CodeSubmissionRequest(BaseModel):
     quiz_id: str

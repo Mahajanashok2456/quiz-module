@@ -840,6 +840,7 @@ async def submit_quiz(submission: AnswerSubmission):
 
         # Calculate score
         score = 0
+        wrong_questions = []  # Track questions user got wrong
         print(f"DEBUG: Processing {len(submission.answers)} user answers")
         print(f"DEBUG: Quiz has {len(quiz['questions'])} questions in DB")
 
@@ -862,27 +863,119 @@ async def submit_quiz(submission: AnswerSubmission):
 
                 if user_answer_str == correct_answer_str:
                     score += 1
+                else:
+                    # Track wrong question for recommendations
+                    wrong_questions.append(question_from_db.get('question', ''))
             else:
                 print(f"DEBUG: Could not find question {user_ans.question_id} in database quiz")
                 print(f"DEBUG: Available question IDs: {[q.get('question_id') for q in quiz['questions']]}")
 
         total_questions = len(submission.answers)
-
-        # Save the result (convert UserAnswer objects to strings for storage)
-        user_answers_str = [ua.user_answer_key for ua in submission.answers]
-        await save_quiz_result(
-            submission.quiz_id,
-            user_answers_str,
-            score,
-            total_questions
-        )
-
         percentage = (score / total_questions) * 100 if total_questions > 0 else 0
+
+        # Generate AI recommendations
+        recommendations = []
+        try:
+            # Build context about wrong answers
+            wrong_context = ""
+            if wrong_questions:
+                wrong_context = f"\nThe user struggled with these questions:\n" + "\n".join(f"- {q[:150]}..." if len(q) > 150 else f"- {q}" for q in wrong_questions[:3])
+            
+            recommendation_prompt = f"""
+A user took a quiz on the topic '{quiz.get('topic', 'Unknown Topic')}'.
+They scored {score} out of {total_questions} ({percentage:.1f}%).
+{wrong_context}
+
+Based on this performance, provide 2-3 brief, actionable learning recommendations or key concepts to review.
+Focus on specific areas for improvement and practical next steps.
+
+Return ONLY a valid JSON object in this exact format:
+{{
+  "recommendations": [
+    "Recommendation 1...",
+    "Recommendation 2...",
+    "Recommendation 3..."
+  ]
+}}
+"""
+            
+            print(f"DEBUG: Generating recommendations with Gemini")
+            
+            # Call Gemini API for recommendations
+            model_names = ['gemini-2.0-flash-exp', 'gemini-pro', 'gemini-1.5-pro']
+            recommendation_model = None
+            
+            for model_name in model_names:
+                try:
+                    recommendation_model = genai.GenerativeModel(model_name)
+                    break
+                except Exception as e:
+                    print(f"DEBUG: Failed to initialize model {model_name}: {e}")
+                    continue
+            
+            if recommendation_model:
+                recommendation_response = recommendation_model.generate_content(recommendation_prompt)
+                recommendation_text = recommendation_response.text.strip()
+                
+                print(f"DEBUG: Raw recommendation response: {recommendation_text[:200]}")
+                
+                # Clean up markdown code blocks if present
+                if recommendation_text.startswith("```json"):
+                    recommendation_text = recommendation_text[7:]
+                if recommendation_text.startswith("```"):
+                    recommendation_text = recommendation_text[3:]
+                if recommendation_text.endswith("```"):
+                    recommendation_text = recommendation_text[:-3]
+                recommendation_text = recommendation_text.strip()
+                
+                # Parse JSON response
+                recommendation_data = json.loads(recommendation_text)
+                recommendations = recommendation_data.get("recommendations", [])
+                
+                # Validate and limit recommendations
+                if not isinstance(recommendations, list):
+                    recommendations = []
+                recommendations = [str(rec)[:500] for rec in recommendations[:3]]  # Limit to 3, max 500 chars each
+                
+                print(f"DEBUG: Generated {len(recommendations)} recommendations")
+            else:
+                print(f"DEBUG: No Gemini model available for recommendations")
+                
+        except json.JSONDecodeError as e:
+            print(f"ERROR: Failed to parse recommendations JSON: {e}")
+            print(f"ERROR: Raw response: {recommendation_text if 'recommendation_text' in locals() else 'N/A'}")
+            recommendations = [
+                "Review the topics where you had difficulty",
+                "Practice more questions on this subject",
+                "Focus on understanding the core concepts"
+            ]
+        except Exception as e:
+            print(f"ERROR: Error generating recommendations: {e}")
+            recommendations = [
+                "Review the topics where you had difficulty",
+                "Practice more questions on this subject"
+            ]
+
+        # Save the result with recommendations (convert UserAnswer objects to strings for storage)
+        user_answers_str = [ua.user_answer_key for ua in submission.answers]
+        result_data = {
+            "quiz_id": submission.quiz_id,
+            "user_answers": user_answers_str,
+            "score": score,
+            "total_questions": total_questions,
+            "percentage": round(percentage, 2),
+            "recommendations": recommendations,
+            "submitted_at": datetime.utcnow()
+        }
+        
+        await database["results"].insert_one(result_data)
+        print(f"DEBUG: Saved result with {len(recommendations)} recommendations")
 
         return ScoreResponse(
             score=score,
             total_questions=total_questions,
-            percentage=round(percentage, 2)
+            percentage=round(percentage, 2),
+            recommendations=recommendations
         )
 
     except HTTPException:
