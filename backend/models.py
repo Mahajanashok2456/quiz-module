@@ -5,12 +5,17 @@ from bson import ObjectId
 
 class TopicRequest(BaseModel):
     topic: str = Field(..., min_length=3, max_length=150, description="Topic for quiz generation (3-150 characters)")
+    question_type: Optional[str] = Field("multiple_choice", description="Type of questions to generate")
+    difficulty: Optional[str] = Field("medium", description="Difficulty level of questions")
 
 class QuizQuestion(BaseModel):
     question_id: str
     question: str
     options: List[str]
     correct_answer: str
+    starter_code: Optional[str] = None
+    difficulty: Optional[str] = None
+    function_name: Optional[str] = None
 
 class QuizInDB(BaseModel):
     id: Optional[str] = None
@@ -22,6 +27,7 @@ class QuizResponse(BaseModel):
     quiz_id: str
     topic: str
     questions: List[QuizQuestion]
+    coding_questions: Optional[List[QuizQuestion]] = None
 
 class UserAnswer(BaseModel):
     question_id: str = Field(..., min_length=1, description="Question identifier")
@@ -44,6 +50,17 @@ class ScoreResponse(BaseModel):
     score: int
     total_questions: int
     percentage: float
+
+class CodeSubmissionRequest(BaseModel):
+    quiz_id: str
+    question_id: str
+    language: str
+    user_code: str
+
+class CodeExecutionResult(BaseModel):
+    passed: bool
+    output: str
+    error: Optional[str] = None
 
 # Helper function to convert MongoDB document to Pydantic model
 def quiz_helper(quiz) -> dict:

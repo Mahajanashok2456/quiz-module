@@ -7,3 +7,4 @@ google-generativeai==0.3.1
 pydantic==2.5.0
 python-multipart==0.0.6
 slowapi==0.1.9
+httpx
