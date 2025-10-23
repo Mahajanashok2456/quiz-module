@@ -1,0 +1,11 @@
+# Ignore environment files that may contain secrets
+backend/.env
+
+# Node modules
+node_modules/
+
+# Python cache
+__pycache__/
+
+# Local env files
+*.env
